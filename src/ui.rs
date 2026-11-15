@@ -442,6 +442,7 @@ impl Ui {
             if let Some(ui) = weak.upgrade()
                 && !ui.suppress_search.get()
             {
+                ui.group_digits();
                 ui.search_changed();
             }
         });
@@ -704,6 +705,23 @@ impl Ui {
             _ => None,
         }
     }
+    /// Shows thousands separators in a calculation as it is typed, keeping the
+    /// cursor after the same digit it followed.
+    fn group_digits(&self) {
+        if self.active.borrow().is_some() {
+            return;
+        }
+        let text = self.entry.text();
+        let Some(grouped) = calculator::group_input(&text) else {
+            return;
+        };
+        let position =
+            calculator::regrouped_cursor(&text, self.entry.position().max(0) as usize, &grouped);
+        self.suppress_search.set(true);
+        self.entry.set_text(&grouped);
+        self.suppress_search.set(false);
+        self.entry.set_position(position as i32);
+    }
     fn search_changed(self: &Rc<Self>) {
         self.cancel();
         if self.active.borrow().is_some() {
@@ -720,7 +738,7 @@ impl Ui {
             *self.debounce.borrow_mut() = Some(source);
             return;
         }
-        let query = self.entry.text().to_string();
+        let query = calculator::ungroup(&self.entry.text()).into_owned();
         // Keep file hits that still match while LocalSearch answers the new query,
         // so the list narrows instead of flickering empty on every keystroke.
         let needle = query.trim().to_lowercase();
@@ -833,7 +851,7 @@ impl Ui {
         }
         let query = self.entry.text();
         let query = query.trim();
-        let needle = query.to_lowercase();
+        let needle = calculator::ungroup(query).to_lowercase();
         let catalog = self.catalog();
         let files = self.file_results.borrow();
         let state = self.state.borrow();
@@ -910,7 +928,7 @@ impl Ui {
                     0,
                     Item {
                         id: "calculator".into(),
-                        title: value.clone(),
+                        title: calculator::display(&value),
                         subtitle: format!("= {query}"),
                         icon: "accessories-calculator-symbolic".into(),
                         keywords: String::new(),
@@ -2434,6 +2452,14 @@ mod tests {
         assert!(ui.list.row_at_index(0).unwrap().header().is_some());
         ui.entry.set_text("2 + 3 * 4");
         assert!(matches!(&ui.results.borrow()[0].kind, Kind::Calculation(v) if v == "14"));
+        ui.entry.set_text("1234567+1");
+        assert_eq!(ui.entry.text(), "1,234,567+1");
+        assert_eq!(ui.results.borrow()[0].title, "1,234,568");
+        assert!(matches!(&ui.results.borrow()[0].kind, Kind::Calculation(v) if v == "1234568"));
+        ui.entry.set_text("1,234");
+        let mut position = 2;
+        ui.entry.insert_text("9", &mut position);
+        assert_eq!(ui.entry.text(), "19,234");
         ui.entry.set_text("Files");
         assert!(
             ui.results
