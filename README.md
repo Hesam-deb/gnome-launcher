@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://github.com/farvisun/gnome-launcher/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/farvisun/gnome-launcher"></a>
   <img alt="GNOME 50" src="https://img.shields.io/badge/GNOME-50-4a86cf?logo=gnome&logoColor=white">
-  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green">
+  <img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-green">
 </p>
 
 <p align="center">
@@ -145,4 +145,4 @@ python3 tests/shell-smoke.py              # private, headless GNOME Shell check
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE). Keep the [NOTICE](NOTICE) in any copy or derivative work

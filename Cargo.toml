@@ -4,7 +4,7 @@ version = "1.1.1"
 edition = "2024"
 rust-version = "1.92"
 description = "Lumen: a native, extensible command launcher for GNOME"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/farvisun/gnome-launcher"
 homepage = "https://farvisun.github.io/gnome-launcher/"
 
