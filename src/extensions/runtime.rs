@@ -567,7 +567,7 @@ fn host(
     event: &impl Fn(Value),
 ) -> Result<Value> {
     let required = match method {
-        "host.copy" | "host.copyFile" | "host.readClipboard" => Some("clipboard"),
+        "host.copy" | "host.copyFile" | "host.readClipboard" | "host.paste" => Some("clipboard"),
         "host.open" => Some("open"),
         "host.notify" => Some("notifications"),
         "host.storage.get" | "host.storage.set" => Some("storage"),
@@ -658,7 +658,9 @@ fn host(
                 "Unsupported URL scheme"
             );
         }
-        event(json!({"type":"effect", "method":method, "text":text}));
+        // host.copy with `concealed` marks a secret so clipboard histories skip it.
+        let concealed = method == "host.copy" && params["concealed"] == true;
+        event(json!({"type":"effect", "method":method, "text":text, "concealed":concealed}));
     }
     Ok(Value::Null)
 }

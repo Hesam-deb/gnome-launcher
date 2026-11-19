@@ -70,7 +70,8 @@ fn run() -> Result<()> {
                     .map(|d| d.display().to_string())
                     .unwrap_or_else(|| "missing".into())
             );
-            // systemd-run and notify-send ring timers; pkexec and fuser stop other users' ports.
+            // systemd-run and notify-send ring timers; pkexec and fuser stop other users' ports;
+            // gdbus edits the clipboard history.
             for binary in [
                 "node",
                 "gnome-extensions",
@@ -79,6 +80,7 @@ fn run() -> Result<()> {
                 "notify-send",
                 "pkexec",
                 "fuser",
+                "gdbus",
             ] {
                 println!(
                     "{binary}: {}",

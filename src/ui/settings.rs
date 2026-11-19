@@ -50,6 +50,79 @@ fn shortcut_settings() -> Option<gio::Settings> {
         None,
     ))
 }
+/// An entry for one of the Shell's shortcut keys, applied with its button.
+fn shortcut_row(title: &str, key: &'static str, fallback: &str) -> adw::EntryRow {
+    let row = adw::EntryRow::builder().title(title).text(fallback).build();
+    let Some(settings) =
+        shortcut_settings().filter(|s| s.settings_schema().is_some_and(|k| k.has_key(key)))
+    else {
+        row.set_sensitive(false);
+        row.set_tooltip_text(Some(
+            "Install the GNOME Shell integration to configure the shortcut",
+        ));
+        return row;
+    };
+    row.set_text(
+        settings
+            .strv(key)
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or(fallback),
+    );
+    let apply = gtk::Button::with_label("Apply");
+    apply.set_valign(gtk::Align::Center);
+    row.add_suffix(&apply);
+    let weak = row.downgrade();
+    apply.connect_clicked(move |_| {
+        if let Some(row) = weak.upgrade() {
+            if let Some((keyval, modifiers)) = gtk::accelerator_parse(row.text())
+                && !modifiers.is_empty()
+                && gtk::accelerator_valid(keyval, modifiers)
+            {
+                match settings.set_strv(key, [row.text().as_str()]) {
+                    Ok(_) => row.remove_css_class("error"),
+                    Err(_) => row.add_css_class("error"),
+                }
+                return;
+            }
+            row.add_css_class("error");
+            row.set_tooltip_text(Some(
+                "Use a valid accelerator such as <Super>space or <Control><Alt>space",
+            ));
+        }
+    });
+    row
+}
+/// The clipboard history's shortcut and a button that clears it. The Shell
+/// owns the history, so clearing goes through its D-Bus service.
+fn clipboard_rows() -> [gtk::Widget; 2] {
+    let shortcut = shortcut_row("Shortcut", "toggle-clipboard-history", "<Super><Shift>v");
+    let clear = adw::ActionRow::builder()
+        .title("Clear History")
+        .subtitle("Forget everything copied so far. Pinned items stay.")
+        .build();
+    let button = gtk::Button::with_label("Clear");
+    button.set_valign(gtk::Align::Center);
+    button.add_css_class("destructive-action");
+    clear.add_suffix(&button);
+    let row = clear.downgrade();
+    button.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        let (row, button) = (row.clone(), button.downgrade());
+        super::call_shell("ClearClipboardHistory", ().to_variant(), move |result| {
+            if let Some(button) = button.upgrade() {
+                button.set_sensitive(true);
+            }
+            if let Some(row) = row.upgrade() {
+                row.set_subtitle(match result {
+                    Ok(()) => "History cleared. Pinned items stay.",
+                    Err(_) => "Could not reach GNOME Shell. Log out and back in, then try again.",
+                });
+            }
+        });
+    });
+    [shortcut.upcast(), clear.upcast()]
+}
 fn builtin_subtitle(ext: &Extension) -> String {
     let commands: Vec<&str> = ext
         .manifest
@@ -92,47 +165,7 @@ impl Ui {
             .title("Keyboard and preferences")
             .description("Super+Space opens Lumen. Super+Shift+Space switches keyboard layouts.")
             .build();
-        let shortcut = adw::EntryRow::builder()
-            .title("Launcher shortcut")
-            .text("<Super>space")
-            .build();
-        if let Some(settings) = shortcut_settings() {
-            shortcut.set_text(
-                settings
-                    .strv("toggle-lumen")
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("<Super>space"),
-            );
-            let apply = gtk::Button::with_label("Apply");
-            apply.set_valign(gtk::Align::Center);
-            shortcut.add_suffix(&apply);
-            let weak = shortcut.downgrade();
-            let settings = settings.clone();
-            apply.connect_clicked(move |_| {
-                if let Some(row) = weak.upgrade() {
-                    if let Some((key, modifiers)) = gtk::accelerator_parse(row.text())
-                        && !modifiers.is_empty()
-                        && gtk::accelerator_valid(key, modifiers)
-                    {
-                        match settings.set_strv("toggle-lumen", [row.text().as_str()]) {
-                            Ok(_) => row.remove_css_class("error"),
-                            Err(_) => row.add_css_class("error"),
-                        }
-                        return;
-                    }
-                    row.add_css_class("error");
-                    row.set_tooltip_text(Some(
-                        "Use a valid accelerator such as <Super>space or <Control><Alt>space",
-                    ));
-                }
-            });
-        } else {
-            shortcut.set_sensitive(false);
-            shortcut.set_tooltip_text(Some(
-                "Install the GNOME Shell integration to configure the shortcut",
-            ));
-        }
+        let shortcut = shortcut_row("Launcher shortcut", "toggle-lumen", "<Super>space");
         behavior.add(&shortcut);
         let history = adw::ActionRow::builder()
             .use_markup(false)
@@ -666,6 +699,11 @@ impl Ui {
                         }
                     }
                     row.add_row(&switch);
+                }
+                if ext.manifest.id == "lumen.clipboard-history" {
+                    for extra in clipboard_rows() {
+                        row.add_row(&extra);
+                    }
                 }
                 for pref in self.preference_rows(&ext) {
                     row.add_row(&pref);

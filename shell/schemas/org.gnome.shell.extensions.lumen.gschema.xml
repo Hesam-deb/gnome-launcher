@@ -5,6 +5,10 @@
       <default>['&lt;Super&gt;space']</default>
       <summary>Toggle the Lumen launcher</summary>
     </key>
+    <key name="toggle-clipboard-history" type="as">
+      <default>['&lt;Super&gt;&lt;Shift&gt;v']</default>
+      <summary>Open Lumen's clipboard history (while the Clipboard History extension is on)</summary>
+    </key>
     <key name="shortcut-backup" type="s">
       <default>''</default>
       <summary>Original and installed shortcut values for conditional restoration</summary>

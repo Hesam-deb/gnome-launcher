@@ -1,33 +1,16 @@
 import Clutter from 'gi://Clutter';
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-const PATH = '/io/github/gnomelauncher/Shell';
-const IFACE = `<node>
-  <interface name="io.github.gnomelauncher.Shell">
-    <method name="ShowHud">
-      <arg type="s" direction="in" name="text"/>
-      <arg type="s" direction="in" name="icon"/>
-    </method>
-  </interface>
-</node>`;
 const VISIBLE_MS = 1800;
 const FADE_MS = 160;
 
 /**
  * Raycast's HUD: a short pill near the bottom of the screen, shown after Lumen
- * closes (for example "Copied Password"). Lumen calls ShowHud on the Shell's
- * own bus name, so nothing else needs to run.
+ * closes (for example "Copied Password"). Lumen calls ShowHud (see service.js).
  */
 export class Hud {
-    constructor() {
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE, {
-            ShowHud: (text, icon) => this.show(text, icon),
-        });
-        this._dbus.export(Gio.DBus.session, PATH);
-    }
     show(text, icon) {
         text = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
         if (!text) return;
@@ -66,7 +49,5 @@ export class Hud {
     }
     destroy() {
         this._clear();
-        this._dbus?.unexport();
-        this._dbus = null;
     }
 }

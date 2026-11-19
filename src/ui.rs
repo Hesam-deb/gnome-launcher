@@ -110,6 +110,8 @@ pub struct Ui {
     /// HUD text to show, and whether to close, once the current request ends.
     pending_hud: RefCell<Option<String>>,
     pending_close: Cell<bool>,
+    /// Text to paste into the previously focused app once Lumen closes.
+    pending_paste: RefCell<Option<String>>,
     /// A dialog of ours (the file chooser) has focus; don't close on blur.
     modal: Cell<bool>,
     spinner: gtk::Spinner,
@@ -159,28 +161,47 @@ pub fn run(args: &[String]) {
             app.add_action(&action);
         }
         // "<extension-id>/<command-id>": the top-bar timer menu opens a command directly.
-        let action = gio::SimpleAction::new("run-command", Some(glib::VariantTy::STRING));
-        let weak = Rc::downgrade(&ui);
-        action.connect_activate(move |_, parameter| {
-            let Some(ui) = weak.upgrade() else { return };
-            // An optional `#<json>` suffix is the command's launch context.
-            let Some(target) = parameter.and_then(|p| p.str()) else {
-                return;
-            };
-            let (target, context) = match target.split_once('#') {
-                Some((target, json)) => (target, serde_json::from_str(json).unwrap_or(Value::Null)),
-                None => (target, Value::Null),
-            };
-            let Some((extension, command)) = target.split_once('/') else {
-                return;
-            };
-            ui.show();
-            if let Err(e) = ui.open_command(extension, command, json!({"launch_context": context}))
-            {
-                ui.status.set_label(&format!("{e:#}"));
-            }
-        });
-        app.add_action(&action);
+        // "toggle-command" closes Lumen instead when that command is already showing,
+        // so a command's own shortcut opens and closes it like Super+Space.
+        for name in ["run-command", "toggle-command"] {
+            let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
+            let weak = Rc::downgrade(&ui);
+            action.connect_activate(move |action, parameter| {
+                let Some(ui) = weak.upgrade() else { return };
+                // An optional `#<json>` suffix is the command's launch context.
+                let Some(target) = parameter.and_then(|p| p.str()) else {
+                    return;
+                };
+                let (target, context) = match target.split_once('#') {
+                    Some((target, json)) => {
+                        (target, serde_json::from_str(json).unwrap_or(Value::Null))
+                    }
+                    None => (target, Value::Null),
+                };
+                let Some((extension, command)) = target.split_once('/') else {
+                    return;
+                };
+                if action.name() == "toggle-command"
+                    && ui.window.is_visible()
+                    && !ui.is_closing()
+                    && ui
+                        .active
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|(e, c)| e.manifest.id == extension && c == command)
+                {
+                    ui.hide();
+                    return;
+                }
+                ui.show();
+                if let Err(e) =
+                    ui.open_command(extension, command, json!({"launch_context": context}))
+                {
+                    ui.status.set_label(&format!("{e:#}"));
+                }
+            });
+            app.add_action(&action);
+        }
     });
     let holder = ui.clone();
     app.connect_command_line(move |_, command| {
@@ -401,6 +422,7 @@ impl Ui {
             toasted: Cell::new(false),
             pending_hud: RefCell::default(),
             pending_close: Cell::new(false),
+            pending_paste: RefCell::default(),
             modal: Cell::new(false),
             spinner,
             arguments,
@@ -1653,6 +1675,7 @@ impl Ui {
         self.failed.set(false);
         self.pending_hud.borrow_mut().take();
         self.pending_close.set(false);
+        self.pending_paste.borrow_mut().take();
         std::thread::spawn(move || {
             let events = tx.clone();
             let result = runtime.request(&ext, &method, params, cancel, |event| {
@@ -1728,10 +1751,16 @@ impl Ui {
     fn finish(self: &Rc<Self>, quiet: bool) {
         self.spinner.set_visible(false);
         let hud = self.pending_hud.borrow_mut().take();
-        let close =
-            self.pending_close.get() || hud.is_some() || (self.no_view.get() && !self.failed.get());
+        let paste = self.pending_paste.borrow_mut().take();
+        let close = self.pending_close.get()
+            || hud.is_some()
+            || paste.is_some()
+            || (self.no_view.get() && !self.failed.get());
         if close {
             self.hide();
+            if let Some(text) = paste {
+                paste_in_active_app(&self.app, &text);
+            }
             if let Some(text) = hud {
                 show_hud(&self.app, &text);
             }
@@ -1912,7 +1941,15 @@ impl Ui {
         let text = event["text"].as_str().unwrap_or("");
         let params = &event["params"];
         match event["method"].as_str() {
+            Some("host.copy") if event["concealed"] == true => {
+                copy_concealed(&self.window.clipboard(), text)
+            }
             Some("host.copy") => self.window.clipboard().set_text(text),
+            Some("host.paste") => {
+                // Copy now, while Lumen has focus, in case the Shell part is missing.
+                self.window.clipboard().set_text(text);
+                *self.pending_paste.borrow_mut() = Some(text.to_owned());
+            }
             Some("host.copyFile") => {
                 if let Some(path) = params["path"].as_str() {
                     copy_file(&self.window.clipboard(), path);
@@ -2282,41 +2319,74 @@ fn copy_file(clipboard: &gdk::Clipboard, path: &str) {
     let _ = clipboard.set_content(Some(&gdk::ContentProvider::new_union(&providers)));
 }
 
-/// Shows Raycast's HUD: a short message the Shell draws after Lumen closes.
-/// Without the Lumen shell extension it becomes a desktop notification.
-fn show_hud(app: &adw::Application, text: &str) {
-    let text = text.to_owned();
-    let app = app.clone();
+/// Calls a method Lumen's GNOME Shell part exports on the Shell's bus name
+/// (shell/service.js). `reply` gets an error when the Shell part is not loaded.
+pub(crate) fn call_shell(
+    method: &'static str,
+    args: glib::Variant,
+    reply: impl FnOnce(Result<(), glib::Error>) + 'static,
+) {
     gio::bus_get(
         gio::BusType::Session,
         None::<&gio::Cancellable>,
         move |bus| {
-            let fallback = {
-                let (app, text) = (app.clone(), text.clone());
-                move || {
-                    let notification = gio::Notification::new(&text);
-                    app.send_notification(None, &notification);
-                }
+            let bus = match bus {
+                Ok(bus) => bus,
+                Err(e) => return reply(Err(e)),
             };
-            let Ok(bus) = bus else { return fallback() };
             bus.call(
                 Some("org.gnome.Shell"),
                 "/io/github/gnomelauncher/Shell",
                 "io.github.gnomelauncher.Shell",
-                "ShowHud",
-                Some(&(text.as_str(), "").to_variant()),
+                method,
+                Some(&args),
                 None,
                 gio::DBusCallFlags::NONE,
                 2000,
                 None::<&gio::Cancellable>,
-                move |result| {
-                    if result.is_err() {
-                        fallback();
-                    }
-                },
+                move |result| reply(result.map(|_| ())),
             );
         },
     );
+}
+
+/// Shows Raycast's HUD: a short message the Shell draws after Lumen closes.
+/// Without the Lumen shell extension it becomes a desktop notification.
+fn show_hud(app: &adw::Application, text: &str) {
+    let (app, owned) = (app.clone(), text.to_owned());
+    call_shell("ShowHud", (text, "").to_variant(), move |result| {
+        if result.is_err() {
+            app.send_notification(None, &gio::Notification::new(&owned));
+        }
+    });
+}
+
+/// Pastes into the window that had focus before Lumen: the Shell waits for it
+/// to take focus back, then presses Ctrl+V. Without the Shell part the text
+/// is only copied, which `host.paste` already did.
+fn paste_in_active_app(app: &adw::Application, text: &str) {
+    let app = app.clone();
+    call_shell("Paste", (text,).to_variant(), move |result| {
+        if result.is_err() {
+            app.send_notification(
+                None,
+                &gio::Notification::new("Copied to Clipboard · press Ctrl+V to paste"),
+            );
+        }
+    });
+}
+
+/// Copies a secret, marked so clipboard managers (Lumen's own history,
+/// KDE's Klipper and others) leave it out of their history.
+fn copy_concealed(clipboard: &gdk::Clipboard, text: &str) {
+    let providers = [
+        gdk::ContentProvider::for_value(&text.to_value()),
+        gdk::ContentProvider::for_bytes(
+            "x-kde-passwordManagerHint",
+            &glib::Bytes::from_static(b"secret"),
+        ),
+    ];
+    let _ = clipboard.set_content(Some(&gdk::ContentProvider::new_union(&providers)));
 }
 
 fn section(kind: &Kind) -> &'static str {

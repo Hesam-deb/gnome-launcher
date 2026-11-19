@@ -37,7 +37,7 @@ export function grid(items: GridItem[], options?: GridOptions): View;
 export function push(view: View): View;
 export function detail(title: string, text: string, options?: {image?: string; metadata?: MetadataRow[]}): View;
 export function form(title: string, fields: Field[], submit_label?: string): View;
-export const host: { copy(text: string): Promise<void>; open(url: string): Promise<void>; notify(text: string): Promise<void>; storage: {get<T = unknown>(key: string): Promise<T | null>; set(key: string, value: unknown): Promise<void>};
+export const host: { copy(text: string, options?: {concealed?: boolean}): Promise<void>; paste(text: string): Promise<void>; open(url: string): Promise<void>; notify(text: string): Promise<void>; storage: {get<T = unknown>(key: string): Promise<T | null>; set(key: string, value: unknown): Promise<void>};
   toast(options: {style?: 'success' | 'failure' | 'animated'; title: string; message?: string}): Promise<void>;
   hud(text: string): Promise<void>; closeWindow(): Promise<void>; openPreferences(): Promise<void>;
   readClipboard(): Promise<{files?: string[]; image?: string; text?: string}>;

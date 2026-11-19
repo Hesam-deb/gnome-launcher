@@ -659,6 +659,7 @@ mod tests {
             "lumen.password-generator",
             "lumen.weather",
             "lumen.sips",
+            "lumen.clipboard-history",
         ] {
             assert!(
                 found.iter().any(|e| e.manifest.id == id && e.builtin),

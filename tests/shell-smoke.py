@@ -95,7 +95,7 @@ try:
     # Turn on the built-ins exercised below before the launcher reads its state.
     state_file = Path(os.environ['XDG_DATA_HOME']) / 'gnome-launcher/state.json'
     state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps({'enabled_builtins': ['lumen.password-generator', 'lumen.weather', 'lumen.sips'],
+    state_file.write_text(json.dumps({'enabled_builtins': ['lumen.password-generator', 'lumen.weather', 'lumen.sips', 'lumen.clipboard-history'],
                                       'preferences': {'lumen.weather': {'defaultquery': 'Berlin', 'clockformat': '24h'},
                                                       'lumen.sips': {'inputMethod': 'Clipboard'}}}))
     app_log = (ROOT / 'dist/shell-app.log').open('w')
@@ -224,6 +224,76 @@ try:
             .get_text(imports.gi.St.ClipboardType.CLIPBOARD, (_clipboard, text) => resolve(text)))''')
         assert copied and len(copied) == 16, f'Clipboard holds {copied!r}, not a 16-character password'
         print('PASS: a no-view command copies its password, closes Lumen and shows a HUD')
+        # Clipboard History: the Shell records copies, skips secrets, edits over D-Bus and pastes back.
+        history_file = Path(os.environ['XDG_DATA_HOME']) / 'gnome-launcher/clipboard-history.json'
+        def history():
+            try: return json.loads(history_file.read_text())['items']
+            except (FileNotFoundError, json.JSONDecodeError): return []
+        def wait_history(check, what):
+            deadline = time.monotonic() + 5
+            while not check(history()) and time.monotonic() < deadline: spin()
+            assert check(history()), f'{what}: {history()}'
+        def copy_in_shell(text):
+            shell_eval('imports.gi.St.Clipboard.get_default().set_text(imports.gi.St.ClipboardType.CLIPBOARD, %s); true' % json.dumps(text))
+        lumen_shell = ('org.gnome.Shell', '/io/github/gnomelauncher/Shell', 'io.github.gnomelauncher.Shell')
+        copy_in_shell('Smoke clip one')
+        wait_history(lambda items: items and items[0]['text'] == 'Smoke clip one', 'A copy was not recorded')
+        assert not any(item['text'] == copied for item in history()), 'The concealed password entered the clipboard history'
+        assert history_file.stat().st_mode & 0o777 == 0o600, oct(history_file.stat().st_mode)
+        invoke(*lumen_shell, 'SetClipboardItemPinned', '(sb)', (history()[0]['id'], True))
+        assert history()[0]['pinned'], 'Pinning did not reach the file before the reply'
+        copy_in_shell('Smoke clip two')
+        wait_history(lambda items: len(items) == 2 and items[0]['text'] == 'Smoke clip two', 'A second copy was not recorded')
+        invoke(*lumen_shell, 'DeleteClipboardItem', '(s)', (history()[0]['id'],))
+        assert [item['text'] for item in history()] == ['Smoke clip one'], history()
+        print('PASS: the Shell records copies privately, skips concealed passwords, and pins and deletes over D-Bus')
+        pasted = Path(os.environ['XDG_DATA_HOME']) / 'paste-target.txt'
+        target = subprocess.Popen([sys.executable, '-c', '''import sys, gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+app = Gtk.Application(application_id='io.github.gnomelauncher.PasteTarget')
+def changed(entry):
+    with open(sys.argv[1], 'w') as out: out.write(entry.get_text())
+def activate(app):
+    window = Gtk.ApplicationWindow(application=app, title='Paste target')
+    entry = Gtk.Entry()
+    entry.connect('changed', changed)
+    window.set_child(entry)
+    window.present()
+app.connect('activate', activate)
+app.run([sys.argv[0]])
+''', str(pasted)], env=dict(os.environ, WAYLAND_DISPLAY='lumen-test', GDK_BACKEND='wayland'), stdout=app_log, stderr=subprocess.STDOUT)
+        try:
+            focused_title = lambda: shell_eval('global.display.focus_window?.get_title() ?? null')
+            deadline = time.monotonic() + 5
+            while focused_title() != 'Paste target' and time.monotonic() < deadline: spin()
+            assert focused_title() == 'Paste target', focused_title()
+            def clipboard_shortcut():
+                # Super_L, Shift_L, v
+                for symbol, pressed in [(0xffeb, True), (0xffe1, True), (0x76, True), (0x76, False), (0xffe1, False), (0xffeb, False)]:
+                    remote('NotifyKeyboardKeysym', '(ub)', (symbol, pressed))
+            def palette_focused():
+                return any(window['focused'] for window in palette_state()['windows'])
+            def wait_palette(focused, what):
+                deadline = time.monotonic() + 5
+                while palette_focused() != focused and time.monotonic() < deadline: spin()
+                assert palette_focused() == focused, what
+            clipboard_shortcut()
+            wait_palette(True, 'Super+Shift+V did not open the clipboard history')
+            for _ in range(10): spin()
+            press(0xff0d)
+            deadline = time.monotonic() + 5
+            while not (pasted.exists() and pasted.read_text() == 'Smoke clip one') and time.monotonic() < deadline: spin()
+            assert pasted.exists() and pasted.read_text() == 'Smoke clip one', (pasted.read_text() if pasted.exists() else 'nothing pasted', (ROOT / 'dist/shell-app.log').read_text()[-2000:])
+            print('PASS: Super+Shift+V opens the clipboard history and Enter pastes into the previous window')
+            clipboard_shortcut()
+            wait_palette(True, 'Super+Shift+V did not reopen the clipboard history')
+            for _ in range(5): spin()
+            clipboard_shortcut()
+            wait_palette(False, 'Super+Shift+V did not close the clipboard history')
+            print('PASS: the clipboard shortcut toggles the history like Super+Space')
+        finally:
+            target.terminate(); target.wait(timeout=5)
         # Image Modification by keyboard: inline argument, clipboard image in, HUD and image out.
         magick = os.environ.get('LUMEN_MAGICK') or shutil.which('magick')
         if magick:

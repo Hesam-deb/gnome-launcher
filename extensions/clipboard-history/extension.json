@@ -1,0 +1,20 @@
+{
+  "id": "lumen.clipboard-history",
+  "name": "Clipboard History",
+  "version": "1.0.0",
+  "sdk_version": 1,
+  "entry": "index.mjs",
+  "description": "Text you copied recently, ready to paste again. Copies marked secret by password managers are skipped",
+  "capabilities": ["clipboard", "filesystem", "process"],
+  "preferences": [
+    {"name": "limit", "type": "dropdown", "title": "Keep up to", "description": "Older items are forgotten. Pinned items never are.", "default": "100",
+     "data": [{"title": "25 items", "value": "25"}, {"title": "50 items", "value": "50"}, {"title": "100 items", "value": "100"}, {"title": "200 items", "value": "200"}]},
+    {"name": "days", "type": "dropdown", "title": "Forget items after", "description": "Pinned items are kept.", "default": "30",
+     "data": [{"title": "1 day", "value": "1"}, {"title": "7 days", "value": "7"}, {"title": "30 days", "value": "30"}, {"title": "90 days", "value": "90"}, {"title": "Never", "value": "0"}]},
+    {"name": "ignored", "type": "textfield", "title": "Ignore copies from", "description": "App IDs or names, separated by commas. KeePassXC and other apps that mark copies as secret are always skipped.", "default": "org.keepassxc.KeePassXC, com.bitwarden.desktop, 1password"}
+  ],
+  "commands": [
+    {"id": "history", "title": "Clipboard History", "icon": "edit-paste-symbolic",
+     "keywords": ["clipboard", "paste", "copy", "history", "clip", "copied"]}
+  ]
+}

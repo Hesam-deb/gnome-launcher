@@ -8,6 +8,9 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {changedBindings, shouldRestore} from './shortcuts.js';
 import {Hud} from './hud.js';
+import {ClipboardHistory} from './clipboard.js';
+import {Paster} from './paste.js';
+import {exportService} from './service.js';
 import {TimerTray} from './timers.js';
 import {WeatherTray} from './weather.js';
 
@@ -70,6 +73,11 @@ export default class Lumen extends Extension {
         this._timers = new TimerTray(this._settings,
             target => this._activate('run-command', [new GLib.Variant('s', target)]));
         this._hud = new Hud();
+        this._clipboard = new ClipboardHistory(this._settings,
+            () => this._activate('toggle-command', [new GLib.Variant('s', 'lumen.clipboard-history/history')]));
+        this._paster = new Paster(window => this._isLauncher(window),
+            () => this._hud?.show('Copied to Clipboard', 'edit-copy-symbolic'));
+        this._service = exportService({hud: this._hud, paster: this._paster, history: this._clipboard});
         this._weather = new WeatherTray(this._settings, {
             // A day opens straight into its hourly forecast, through the launch context.
             open: day => this._activate('run-command',
@@ -208,6 +216,12 @@ export default class Lumen extends Extension {
         });
     }
     disable() {
+        this._service?.unexport();
+        this._service = null;
+        this._paster?.destroy();
+        this._paster = null;
+        this._clipboard?.destroy();
+        this._clipboard = null;
         this._timers?.destroy();
         this._timers = null;
         this._hud?.destroy();

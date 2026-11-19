@@ -116,7 +116,8 @@ Host methods:
 
 | Method | Capability | Behavior |
 | --- | --- | --- |
-| `await host.copy(text)` | clipboard | Copy text to the system clipboard |
+| `await host.copy(text, {concealed?})` | clipboard | Copy text to the system clipboard. `concealed: true` marks it as a secret (as password managers do), so clipboard histories skip it |
+| `await host.paste(text)` | clipboard | Close Lumen when the request ends and paste `text` into the window that had focus (Ctrl+V, or Ctrl+Shift+V in terminals). Without Lumen's GNOME Shell part the text is only copied |
 | `await host.open(url)` | open | Open HTTP(S), file, or mailto URI with its registered app |
 | `await host.notify(text)` | notifications | Show a desktop notification |
 | `await host.storage.get(key)` | storage | Read JSON or return null |
@@ -139,6 +140,6 @@ The SDK uses newline-delimited JSON-RPC 2.0 over stdin/stdout. A developer can i
 
 Host requests use numeric IDs and methods `command.run`, `command.query`, `command.action`, `command.submit` and `command.select`. Params include `command`, `query`, `preferences`, `arguments`, `launch_context` and the visible view's `context`; actions also include `item` and `action`, selections include `item`, and submits include `values`. Responses use the same ID with a view in `result` or a JSON-RPC error.
 
-Host sends `$/cancelRequest` with `{id}` before terminating a cancelled worker. For intermediate views, send `view.update` with `{request_id, view}`. Extension-to-host requests use string IDs (the SDK uses `host:1`, etc.) and methods `host.copy`, `host.open`, `host.notify` with `{text}`, or `host.storage.get`/`host.storage.set` with `{key, value?}`. Host responds with JSON result or an error.
+Host sends `$/cancelRequest` with `{id}` before terminating a cancelled worker. For intermediate views, send `view.update` with `{request_id, view}`. Extension-to-host requests use string IDs (the SDK uses `host:1`, etc.) and methods `host.copy` (with optional `concealed`), `host.paste`, `host.open`, `host.notify` with `{text}`, or `host.storage.get`/`host.storage.set` with `{key, value?}`. Host responds with JSON result or an error.
 
 See [Quick Links](../examples/quick-links/index.mjs) and [Scratchpad](../examples/scratchpad/index.mjs) for complete examples.

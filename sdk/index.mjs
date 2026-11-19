@@ -20,7 +20,10 @@ function call(method, params, wait = 8000) {
   });
 }
 export const host = Object.freeze({
-  copy: text => call('host.copy', {text}),
+  /** `{concealed: true}` marks a secret, so clipboard histories leave it out. */
+  copy: (text, {concealed = false} = {}) => call('host.copy', concealed ? {text, concealed} : {text}),
+  /** Raycast's Clipboard.paste: Lumen closes when the request ends and the text is pasted into the app that had focus. */
+  paste: text => call('host.paste', {text}),
   open: text => call('host.open', {text}),
   notify: text => call('host.notify', {text}),
   storage: Object.freeze({get: key => call('host.storage.get', {key}), set: (key, value) => call('host.storage.set', {key, value})}),
