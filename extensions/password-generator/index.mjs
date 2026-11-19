@@ -3,7 +3,7 @@ import {FORMAT_HELP, generateCustomPassword, generatePassword, parseLength} from
 
 /** Copies the password, then shows a toast, or closes Lumen with a HUD. */
 async function deliver(password, preferences, note = '') {
-  await host.copy(password);
+  await host.copy(password, {concealed: true});
   if (preferences.hideAfterCopy) {
     await host.hud(`Copied Password - ${password} 🎉`);
   } else {
@@ -54,7 +54,7 @@ serve({
         return null;
       }
       const password = generatePassword(length, preferences.useNumbers, preferences.useChars);
-      await host.copy(password);
+      await host.copy(password, {concealed: true});
       await host.hud(preferences.hideAfterCopy ? `Copied Password - ${password} 🎉` : 'Copied Password 🎉');
       return null;
     },
