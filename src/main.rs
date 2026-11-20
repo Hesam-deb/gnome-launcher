@@ -1,5 +1,6 @@
 mod apps;
 mod calculator;
+mod emoji;
 mod extensions;
 mod files;
 mod model;

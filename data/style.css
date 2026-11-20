@@ -127,6 +127,10 @@ button.scope:hover {
   font-weight: 700;
   font-feature-settings: "tnum";
 }
+/* An inline emoji result shows the emoji where other results show an icon. */
+.emoji-glyph {
+  font-size: 24px;
+}
 .result-subtitle {
   font-size: 12px;
   opacity: 0.6;

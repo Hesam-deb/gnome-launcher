@@ -1,0 +1,18 @@
+{
+  "id": "lumen.emoji",
+  "name": "Emoji",
+  "version": "1.0.0",
+  "sdk_version": 1,
+  "entry": "index.mjs",
+  "description": "Search emoji by name, keyword (English or Persian), :shortcode: or emoticon such as :) and paste them into the app you were using. Type :fire or :) in Lumen's search to see emoji right away",
+  "capabilities": ["clipboard", "storage"],
+  "preferences": [
+    {"name": "skinTone", "type": "dropdown", "title": "Skin tone", "description": "Used for people and hands that come in several skin tones.", "default": "0",
+     "data": [{"title": "Default 👋", "value": "0"}, {"title": "Light 👋🏻", "value": "1"}, {"title": "Medium-light 👋🏼", "value": "2"},
+              {"title": "Medium 👋🏽", "value": "3"}, {"title": "Medium-dark 👋🏾", "value": "4"}, {"title": "Dark 👋🏿", "value": "5"}]}
+  ],
+  "commands": [
+    {"id": "search-emoji", "title": "Search Emoji", "subtitle": "Emoji", "icon": "face-smile-symbolic",
+     "keywords": ["emoji", "emoticon", "smiley", "symbols", "picker", "character", "ایموجی", "شکلک", "اموجی"]}
+  ]
+}

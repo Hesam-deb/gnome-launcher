@@ -21,6 +21,8 @@ pub enum Kind {
     App(String),
     File(String),
     Calculation(String),
+    /// An emoji from the Emoji extension's data, pasted as is.
+    Emoji(String),
     Command { extension: String, command: String },
     Settings,
 }

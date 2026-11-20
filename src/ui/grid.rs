@@ -1,5 +1,5 @@
-//! Raycast-style grid views: tiles with a picture or an icon, grouped in
-//! sections. Selection is tracked by index so the arrow keys can move in two
+//! Raycast-style grid views: tiles with a picture, an icon or a short text
+//! such as an emoji, grouped in sections. Selection is tracked by index so the arrow keys can move in two
 //! dimensions while the search field keeps focus.
 use gtk::prelude::*;
 use serde_json::Value;
@@ -45,7 +45,7 @@ pub fn build(view: &Value, activate: impl Fn(usize) + Clone + 'static) -> Grid {
         .as_array()
         .into_iter()
         .flatten()
-        .take(100)
+        .take(crate::extensions::runtime::max_items(view))
         .enumerate()
     {
         let name = item["section"].as_str().unwrap_or("").to_owned();
@@ -93,6 +93,9 @@ fn tile(item: &Value, width: i32, height: i32) -> gtk::Button {
     let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
     frame.add_css_class("grid-frame");
     frame.set_size_request(width, height);
+    // Content expands to centre itself in the frame; that must not stretch
+    // the rows of a grid shorter than the window.
+    frame.set_vexpand(false);
     frame.set_overflow(gtk::Overflow::Hidden);
     let media = &item["content"];
     if let Some(path) = media["image"].as_str() {
@@ -101,6 +104,18 @@ fn tile(item: &Value, width: i32, height: i32) -> gtk::Button {
         picture.set_can_shrink(true);
         picture.set_vexpand(true);
         frame.append(&picture);
+    } else if let Some(text) = media["text"].as_str() {
+        // Sized to the tile in pixels, so emoji fill it at any column count.
+        let label = gtk::Label::new(Some(text));
+        let attributes = gtk::pango::AttrList::new();
+        attributes.insert(gtk::pango::AttrSize::new_size_absolute(
+            (height * 9 / 20).max(12) * gtk::pango::SCALE,
+        ));
+        label.set_attributes(Some(&attributes));
+        label.add_css_class("grid-text");
+        label.set_vexpand(true);
+        label.set_valign(gtk::Align::Center);
+        frame.append(&label);
     } else {
         let icon = super::rich::icon(media["icon"].as_str().unwrap_or("image-x-generic-symbolic"));
         icon.set_pixel_size((height / 3).clamp(16, 48));

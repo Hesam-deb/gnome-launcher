@@ -14,7 +14,7 @@ export interface ItemDetail {
 export interface ListItem { id: string; title: string; subtitle?: string; icon?: string; tint?: Color; section?: string; progress?: number; accessories?: Accessory[]; detail?: ItemDetail; actions?: Action[] }
 export interface ViewOptions { push?: boolean; context?: unknown; selection?: boolean }
 export interface ListOptions extends ViewOptions { title?: string; placeholder?: string; detail?: boolean; refresh?: number; empty?: {title: string; description?: string; icon?: string} }
-export interface GridItem { id: string; title: string; subtitle?: string; section?: string; tooltip?: string; content: {image?: string; icon?: string; tint?: Color}; actions?: Action[] }
+export interface GridItem { id: string; title: string; subtitle?: string; section?: string; tooltip?: string; content: {image?: string; icon?: string; tint?: Color; /** 1–16 characters, such as an emoji, drawn to fill the tile. */ text?: string}; actions?: Action[] }
 export interface GridOptions extends ListOptions { columns?: number; aspect?: '1' | '3/2' | '2/3' | '4/3' | '3/4' | '16/9' | '9/16' }
 export interface Field { id: string; label: string; type?: 'text' | 'password' | 'boolean' | 'dropdown' | 'description'; value?: string | boolean; placeholder?: string; required?: boolean; info?: string; text?: string; options?: {value: string; title: string}[] }
 export type View = (({ type: 'list'; items: ListItem[] } & ListOptions) | ({ type: 'grid'; items: GridItem[] } & GridOptions) | ({ type: 'detail'; title: string; text: string; image?: string; metadata?: MetadataRow[] } & ViewOptions) | ({ type: 'form'; title: string; fields: Field[]; submit_label?: string } & ViewOptions));

@@ -102,7 +102,7 @@ Native views:
 
   Colours are `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `accent` and `dim`; they follow the GNOME palette in light and dark styles.
   List item icons may also be absolute paths of local images.
-- `grid(items, options?)`: tiles with `content: {image}` (an absolute path to a local image) or `content: {icon, tint}`, plus `title`, `subtitle`, `section`, `tooltip` and `actions`. Options are those of lists plus `columns` (3–8, default 5) and `aspect` (`1`, `3/2`, `2/3`, `4/3`, `3/4`, `16/9`, `9/16`). Arrow keys move in two dimensions.
+- `grid(items, options?)`: up to 2000 tiles with `content: {image}` (an absolute path to a local image), `content: {icon, tint}` or `content: {text}` (1–16 characters, such as an emoji, drawn to fill the tile), plus `title`, `subtitle`, `section`, `tooltip` and `actions`. A text tile usually leaves `title` empty; the footer then shows the selected tile's `tooltip`. Options are those of lists plus `columns` (3–8, default 5) and `aspect` (`1`, `3/2`, `2/3`, `4/3`, `3/4`, `16/9`, `9/16`). Arrow keys move in two dimensions.
 - `detail(title, text, {image?, metadata?})`: selectable plain text, up to 100 KB, with an optional local image and metadata rows. Arbitrary HTML and webviews are unsupported.
 - `form(title, fields, submitLabel?)`: up to 30 fields, with unique IDs, labels, and `text`, `password`, `boolean`, `dropdown` (`options: [{value, title}]`) or `description` (read-only `text`) types. Optional `required`, `placeholder`, `value` and `info` (help text under the field). Enter in a text field or the button calls the command's `submit` handler.
 

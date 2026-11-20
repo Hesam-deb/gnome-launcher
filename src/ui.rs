@@ -4,7 +4,7 @@ mod settings;
 pub use rich::COLORS;
 
 use crate::{
-    apps, calculator,
+    apps, calculator, emoji,
     extensions::{
         package::{self, Extension, Mode},
         runtime::{self, Runtime},
@@ -122,6 +122,11 @@ pub struct Ui {
     grid_scroll: gtk::ScrolledWindow,
     grid: RefCell<Option<grid::Grid>>,
     grid_selected: Cell<usize>,
+    /// The footer names the selected text tile (see `describe_tile`).
+    described: Cell<bool>,
+    /// The Emoji extension's data, read the first time a query could show
+    /// emoji; None if it could not be read.
+    emoji: std::cell::OnceCell<Option<emoji::Index>>,
     /// The selected item's ID when a `selection` event was last sent.
     selected_id: RefCell<String>,
     select_debounce: RefCell<Option<glib::SourceId>>,
@@ -431,6 +436,8 @@ impl Ui {
             grid_scroll,
             grid: RefCell::default(),
             grid_selected: Cell::new(0),
+            described: Cell::new(false),
+            emoji: std::cell::OnceCell::new(),
             selected_id: RefCell::default(),
             select_debounce: RefCell::default(),
             form: RefCell::default(),
@@ -969,6 +976,15 @@ impl Ui {
             }
             _ => {}
         }
+        let emoji = self.inline_emoji(query);
+        if !emoji.is_empty() {
+            // `8)` or `-_-` read as broken maths, but they are emoticons.
+            calc_error = None;
+            let at = usize::from(items.first().is_some_and(|i| i.id == "calculator"));
+            let count = emoji.len();
+            items.splice(at..at, emoji);
+            sections.splice(at..at, std::iter::repeat_n("Emoji", count));
+        }
         let count = items.len();
         self.status.set_label(&match calc_error {
             Some(e) => e,
@@ -1154,6 +1170,7 @@ impl Ui {
                         .and_then(|i| i["actions"][0]["title"].as_str().map(str::to_owned))
                         .unwrap_or_else(|| "Select".into()),
                     (Kind::Calculation(_), _) => "Copy".into(),
+                    (Kind::Emoji(_), _) => "Paste".into(),
                     (Kind::Command { .. }, _) => {
                         if self.arguments.is_visible() {
                             "Run with Arguments".into()
@@ -1237,6 +1254,16 @@ impl Ui {
                     self.window.clipboard().set_text(value);
                     self.status
                         .set_label(&format!("Copied {value} to the clipboard"));
+                }
+                Kind::Emoji(glyph) => {
+                    // As host.paste does: copy while Lumen has focus, then
+                    // paste once the previous window has it back.
+                    self.window.clipboard().set_text(glyph);
+                    self.remember_emoji(&item.id);
+                    self.hide();
+                    paste_in_active_app(&self.app, glyph);
+                    // Inline emoji are not in the catalog; usage would only pile up.
+                    return Ok(());
                 }
                 Kind::Settings => self.open_settings(),
                 Kind::Command { extension, command } => {
@@ -1470,7 +1497,35 @@ impl Ui {
             }
         }
         self.update_hints();
+        self.describe_tile();
         self.selection_changed();
+    }
+    /// A text tile (an emoji) has no caption, so the footer names the selected
+    /// one with its tooltip, and goes back to the usual hint when none is.
+    fn describe_tile(&self) {
+        let label = (self.stack.visible_child_name().as_deref() == Some("grid"))
+            .then(|| self.selected_index())
+            .flatten()
+            .and_then(|index| {
+                let rendered = self.rendered.borrow();
+                let item = rendered.2.get(index)?;
+                item["content"]["text"].as_str()?;
+                Some(
+                    item["tooltip"]
+                        .as_str()
+                        .or(item["title"].as_str())
+                        .unwrap_or("")
+                        .to_owned(),
+                )
+            });
+        match label {
+            Some(label) => {
+                self.status.set_label(&label);
+                self.described.set(true);
+            }
+            None if self.described.replace(false) => self.status.set_label("Esc to go back"),
+            None => {}
+        }
     }
     /// Views with `selection: true` hear which item is highlighted, after a pause.
     fn selection_changed(self: &Rc<Self>) {
@@ -1511,6 +1566,74 @@ impl Ui {
         if let Err(e) = self.state.borrow().save() {
             self.status
                 .set_label(&format!("Cannot save preferences: {e}"));
+        }
+    }
+    /// The Emoji extension while it is on: inline emoji follow its switch,
+    /// data and skin tone.
+    fn emoji_extension(&self) -> Option<Extension> {
+        let state = self.state.borrow();
+        self.extensions
+            .borrow()
+            .iter()
+            .find(|e| e.builtin && e.manifest.id == emoji::EXTENSION && state.is_enabled(e))
+            .cloned()
+    }
+    /// Emoji rows for `query` in the main search (see `emoji::Index::inline`).
+    fn inline_emoji(&self, query: &str) -> Vec<Item> {
+        // Cheap test first: emoji need a colon or an emoticon's punctuation.
+        if !query.chars().any(|c| c.is_ascii_punctuation()) {
+            return Vec::new();
+        }
+        let Some(ext) = self.emoji_extension() else {
+            return Vec::new();
+        };
+        let Some(index) = self
+            .emoji
+            .get_or_init(|| {
+                let path = ext.directory.join("emoji.json");
+                std::fs::read_to_string(&path)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|text| emoji::Index::parse(&text))
+                    .inspect_err(|e| eprintln!("Lumen: cannot read {}: {e:#}", path.display()))
+                    .ok()
+            })
+            .as_ref()
+        else {
+            return Vec::new();
+        };
+        let tone = self
+            .state
+            .borrow()
+            .preference_values(&ext, "search-emoji")
+            .get("skinTone")
+            .and_then(|v| v.as_str()?.parse().ok())
+            .unwrap_or(0);
+        index
+            .inline(query)
+            .into_iter()
+            .map(|e| {
+                let glyph = e.with_tone(tone).to_owned();
+                Item {
+                    id: format!("emoji:{}", e.glyph),
+                    title: emoji::title_case(&e.label),
+                    subtitle: e.shortcode().map(|c| format!(":{c}:")).unwrap_or_default(),
+                    icon: String::new(),
+                    keywords: String::new(),
+                    kind: Kind::Emoji(glyph),
+                }
+            })
+            .collect()
+    }
+    /// Adds an emoji picked inline (`emoji:<glyph>`) to the picker's
+    /// recently used, which the Emoji extension keeps in its storage.
+    fn remember_emoji(&self, id: &str) {
+        let Some(glyph) = id.strip_prefix("emoji:") else {
+            return;
+        };
+        if let Err(e) = runtime::update_storage(emoji::EXTENSION, "recent", |recent| {
+            emoji::remember(recent, glyph)
+        }) {
+            eprintln!("Lumen: cannot remember emoji: {e:#}");
         }
     }
     pub(super) fn refresh_extensions(self: &Rc<Self>) {
@@ -1570,6 +1693,18 @@ impl Ui {
                         }),
                     );
                 }
+            } else if let Kind::Emoji(glyph) = item.kind.clone() {
+                let id = item.id.clone();
+                add(
+                    "Copy to Clipboard",
+                    "edit-copy-symbolic",
+                    Box::new(move |ui| {
+                        ui.window.clipboard().set_text(&glyph);
+                        ui.remember_emoji(&id);
+                        ui.status
+                            .set_label(&format!("Copied {glyph} to the clipboard"));
+                    }),
+                );
             } else {
                 let favorite = self.state.borrow().favorites.contains(&item.id);
                 let id = item.id.clone();
@@ -2000,16 +2135,27 @@ impl Ui {
         }
     }
     fn render_view(self: &Rc<Self>, view: Value) {
+        let started = Instant::now();
+        self.render_view_inner(view);
+        if std::env::var_os("LUMEN_PROFILE").is_some() {
+            eprintln!(
+                "Lumen view rendered in {:.2} ms",
+                started.elapsed().as_secs_f64() * 1000.
+            );
+        }
+    }
+    fn render_view_inner(self: &Rc<Self>, view: Value) {
         *self.view.borrow_mut() = view.clone();
         self.form.borrow_mut().clear();
         if let Some(placeholder) = view["placeholder"].as_str() {
             self.entry.set_placeholder_text(Some(placeholder));
         }
+        let limit = runtime::max_items(&view);
         let items: Vec<Item> = view["items"]
             .as_array()
             .into_iter()
             .flatten()
-            .take(100)
+            .take(limit)
             .map(|i| Item {
                 id: i["id"].as_str().unwrap_or("").into(),
                 title: i["title"].as_str().unwrap_or("").into(),
@@ -2029,7 +2175,7 @@ impl Ui {
             .as_array()
             .into_iter()
             .flatten()
-            .take(100)
+            .take(limit)
             .cloned()
             .collect();
         match view["type"].as_str() {
@@ -2120,6 +2266,7 @@ impl Ui {
         self.stack.set_visible_child_name("grid");
         if empty {
             self.update_hints();
+            self.describe_tile();
             return;
         }
         if let Some(tile) = self.grid.borrow().as_ref().and_then(|g| g.tiles.get(index)) {
@@ -2137,6 +2284,7 @@ impl Ui {
             }
         });
         self.update_hints();
+        self.describe_tile();
         self.selection_changed();
     }
     fn render_form(self: &Rc<Self>, view: &Value) {
@@ -2394,6 +2542,7 @@ fn section(kind: &Kind) -> &'static str {
         Kind::App(_) => "Applications",
         Kind::File(_) => "Files & folders",
         Kind::Calculation(_) => "Calculator",
+        Kind::Emoji(_) => "Emoji",
         Kind::Command { .. } => "Commands",
         Kind::Settings => "Lumen",
     }
@@ -2415,7 +2564,16 @@ fn result_row(item: &Item, favorite: bool, decor: &Value) -> gtk::Box {
         icon.set_pixel_size(32);
     }
     icon.set_valign(gtk::Align::Center);
-    content.append(&icon);
+    if let Kind::Emoji(glyph) = &item.kind {
+        // The emoji itself stands in for the icon, at an app icon's size.
+        let label = gtk::Label::new(Some(glyph));
+        label.add_css_class("emoji-glyph");
+        label.set_size_request(32, 32);
+        label.set_valign(gtk::Align::Center);
+        content.append(&label);
+    } else {
+        content.append(&icon);
+    }
     let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
     text.set_hexpand(true);
     text.set_valign(gtk::Align::Center);
@@ -2450,6 +2608,7 @@ fn result_row(item: &Item, favorite: bool, decor: &Value) -> gtk::Box {
         Kind::File(_) if item.icon == "folder" => "Folder",
         Kind::File(_) => "File",
         Kind::Calculation(_) => "Calculator",
+        Kind::Emoji(_) => "Emoji",
         Kind::Command { extension, .. } if extension.is_empty() => "",
         Kind::Command { .. } => "Command",
         Kind::Settings => "Lumen",
@@ -2642,6 +2801,98 @@ mod tests {
         ui.hide();
         ui.window.destroy();
     }
+    fn save_png(ui: &Ui, path: &std::path::Path) {
+        let paintable = gtk::WidgetPaintable::new(Some(&ui.window));
+        let snapshot = gtk::Snapshot::new();
+        paintable.snapshot(
+            &snapshot,
+            ui.window.width() as f64,
+            ui.window.height() as f64,
+        );
+        let node = snapshot.to_node().unwrap();
+        let texture = ui.window.renderer().unwrap().render_texture(&node, None);
+        texture.save_to_png(path).unwrap();
+    }
+    /// `:fire`, `:)` and `8)` list emoji above the other results while the
+    /// Emoji extension is on, and nothing while it is off. With
+    /// LUMEN_SCREENSHOT set, saves `inline-emoji.png` there.
+    #[test]
+    #[ignore = "requires a GNOME display; run isolated with --test-threads=1"]
+    fn inline_emoji() {
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id("io.github.gnomelauncher.EmojiTest")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let ui = Ui::new(&app);
+        ui.show();
+        spin_until(|| ui.window.is_mapped());
+        // Only in memory: nothing here saves the state.
+        let before = ui.state.borrow().enabled_builtins.clone();
+        let emoji = |ui: &Ui| -> Vec<String> {
+            ui.results
+                .borrow()
+                .iter()
+                .filter_map(|i| match &i.kind {
+                    Kind::Emoji(g) => Some(g.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        ui.state
+            .borrow_mut()
+            .enabled_builtins
+            .remove(emoji::EXTENSION);
+        ui.entry.set_text(":)");
+        assert!(emoji(&ui).is_empty());
+        ui.state
+            .borrow_mut()
+            .enabled_builtins
+            .insert(emoji::EXTENSION.into());
+        ui.entry.set_text(":fire");
+        assert_eq!(emoji(&ui)[0], "🔥");
+        assert!(matches!(ui.results.borrow()[0].kind, Kind::Emoji(_)));
+        ui.entry.set_text("8)");
+        assert_eq!(emoji(&ui)[0], "😎");
+        assert!(!ui.status.label().contains("rror"), "{}", ui.status.label());
+        ui.entry.set_text("fire");
+        assert!(emoji(&ui).is_empty());
+        ui.entry.set_text(":)");
+        assert_eq!(emoji(&ui)[..3], ["🙂", "😊", "😀"]);
+        assert_eq!(ui.results.borrow()[0].title, "Slightly Smiling Face");
+        assert_eq!(ui.primary_label.label(), "Paste");
+        // The picker itself: the extension's worker answers with every emoji.
+        let ext = package::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("extensions/emoji"),
+        )
+        .unwrap();
+        ui.suppress_search.set(true);
+        ui.entry.set_text("");
+        ui.suppress_search.set(false);
+        *ui.active.borrow_mut() = Some((ext, "search-emoji".into()));
+        ui.extension_request("command.run", json!({}));
+        spin_until(|| ui.view.borrow()["type"] == "grid");
+        assert!(ui.results.borrow().len() > 1800);
+        assert_eq!(ui.grid.borrow().as_ref().unwrap().columns, 8);
+        ui.back();
+        ui.entry.set_text(":)");
+        if let Some(out) = std::env::var_os("LUMEN_SCREENSHOT") {
+            let out = std::path::PathBuf::from(out);
+            std::fs::create_dir_all(&out).unwrap();
+            let context = glib::MainContext::default();
+            let until = Instant::now() + Duration::from_millis(400);
+            while Instant::now() < until {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            save_png(&ui, &out.join("inline-emoji.png"));
+        }
+        ui.state.borrow_mut().enabled_builtins = before;
+        ui.hide();
+        ui.window.destroy();
+    }
     /// Renders saved extension views for visual review: every `*.json` view in
     /// LUMEN_VIEW_DIR becomes `<name>-light.png` and `<name>-dark.png` in
     /// LUMEN_SCREENSHOT. LUMEN_VIEW_SELECT picks rows, as in `ports-1=2,speed-1=3`.
@@ -2722,18 +2973,7 @@ mod tests {
                     ui.list.select_row(Some(&row));
                 }
                 settle(400);
-                let paintable = gtk::WidgetPaintable::new(Some(&ui.window));
-                let snapshot = gtk::Snapshot::new();
-                paintable.snapshot(
-                    &snapshot,
-                    ui.window.width() as f64,
-                    ui.window.height() as f64,
-                );
-                let node = snapshot.to_node().unwrap();
-                let texture = ui.window.renderer().unwrap().render_texture(&node, None);
-                texture
-                    .save_to_png(out.join(format!("{name}-{suffix}.png")))
-                    .unwrap();
+                save_png(&ui, &out.join(format!("{name}-{suffix}.png")));
             }
         }
         ui.hide();

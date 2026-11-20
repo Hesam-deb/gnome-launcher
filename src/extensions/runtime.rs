@@ -312,6 +312,39 @@ impl Runtime {
         }
     }
 }
+fn read_storage(id: &str) -> Result<BTreeMap<String, Value>> {
+    let path = storage_path(id);
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).context("Extension storage is corrupt"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+fn storage_path(id: &str) -> std::path::PathBuf {
+    crate::store::data_dir()
+        .join("extension-storage")
+        .join(format!("{id}.json"))
+}
+/// Replaces one key of an extension's `host.storage`, given its current value
+/// (null when unset). Lumen uses it to share state with a built-in, such as
+/// the emoji picked inline joining the Emoji picker's recently used.
+pub fn update_storage(id: &str, key: &str, update: impl FnOnce(&Value) -> Value) -> Result<()> {
+    let mut data = read_storage(id)?;
+    let value = update(data.get(key).unwrap_or(&Value::Null));
+    data.insert(key.into(), value);
+    ensure!(
+        serde_json::to_vec(&data)?.len() <= 1024 * 1024,
+        "Storage exceeds 1 MiB"
+    );
+    crate::store::write_json(&storage_path(id), &data)
+}
+
+/// Lists build a row per item; grids of small tiles, such as emoji, may hold
+/// many more.
+pub fn max_items(view: &Value) -> usize {
+    if view["type"] == "grid" { 2000 } else { 100 }
+}
+
 pub fn validate_view(view: &Value) -> Result<()> {
     if view.is_null() {
         return Ok(());
@@ -332,9 +365,10 @@ pub fn validate_view(view: &Value) -> Result<()> {
     match view["type"].as_str() {
         Some(kind @ ("list" | "grid")) => {
             let items = view["items"].as_array().context("List needs items")?;
+            let limit = max_items(view);
             ensure!(
-                items.len() <= 100,
-                "Extensions may return at most 100 items"
+                items.len() <= limit,
+                "Extensions may return at most {limit} items in a {kind}"
             );
             let mut ids = std::collections::BTreeSet::new();
             for item in items {
@@ -367,6 +401,13 @@ pub fn validate_view(view: &Value) -> Result<()> {
                     } else {
                         ensure!(content["image"].is_null(), "Grid image must be a path");
                     }
+                    ensure!(
+                        content["text"].is_null()
+                            || content["text"]
+                                .as_str()
+                                .is_some_and(|t| !t.is_empty() && t.chars().count() <= 16),
+                        "Grid text must be 1–16 characters, such as an emoji"
+                    );
                 }
             }
             if let Some(refresh) = view.get("refresh") {
@@ -627,25 +668,14 @@ fn host(
         _ => {}
     }
     if method.starts_with("host.storage.") {
-        let path = crate::store::data_dir()
-            .join("extension-storage")
-            .join(format!("{}.json", ext.manifest.id));
-        let mut data: BTreeMap<String, Value> = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).context("Extension storage is corrupt")?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(e) => return Err(e.into()),
-        };
         let key = params["key"].as_str().context("Missing storage key")?;
         ensure!(key.len() <= 200, "Storage key is too long");
         if method == "host.storage.get" {
-            return Ok(data.get(key).cloned().unwrap_or(Value::Null));
+            return Ok(read_storage(&ext.manifest.id)?
+                .remove(key)
+                .unwrap_or(Value::Null));
         }
-        data.insert(key.into(), params["value"].clone());
-        ensure!(
-            serde_json::to_vec(&data)?.len() <= 1024 * 1024,
-            "Storage exceeds 1 MiB"
-        );
-        crate::store::write_json(&path, &data)?;
+        update_storage(&ext.manifest.id, key, |_| params["value"].clone())?;
     } else {
         let text = params["text"].as_str().context("Missing text")?;
         ensure!(text.len() <= 100_000, "Host action exceeds size limit");
@@ -703,6 +733,16 @@ mod tests {
         let mut bad = grid.clone();
         bad["items"][0]["content"]["image"] = json!("https://example.com/a.png");
         assert!(validate_view(&bad).is_err());
+        let mut text = grid.clone();
+        text["items"][1]["content"] = json!({"text":"👍🏽"});
+        assert!(validate_view(&text).is_ok());
+        text["items"][1]["content"] = json!({"text":""});
+        assert!(validate_view(&text).is_err());
+        let many: Vec<_> = (0..2000)
+            .map(|i| json!({"id":i.to_string(),"title":"","content":{"text":"🙂"}}))
+            .collect();
+        assert!(validate_view(&json!({"type":"grid","items":many})).is_ok());
+        assert!(validate_view(&json!({"type":"list","items":many})).is_err());
         let mut bad = grid.clone();
         bad["columns"] = json!(12);
         assert!(validate_view(&bad).is_err());
