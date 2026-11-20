@@ -36,6 +36,7 @@ Press **Super + Space**, type a few letters and press **Enter**. Lumen opens app
   - **Weather:** current conditions and a three-day forecast for any place from wttr.in, with an hourly view for each day and, if you like, the weather in the top bar.
   - **Image Modification:** flip, rotate, resize, scale, pad, optimize, convert (WebP, AVIF, PNG, JPEG and more), strip EXIF data or remove the background of the images selected in Files, or of an image on the clipboard; apply 45 filters with live previews; create placeholder and pattern images. It needs ImageMagick (`sudo apt install imagemagick`), and `python3-nautilus` to see what is selected in Files. Remove Background uses [rembg](https://github.com/danielgatis/rembg) if it is installed. Raycast's quicklinks, "Paste in Active App" and PDF page editing are not included.
   - **Clipboard History:** press **Super + Shift + V** (or search *Clipboard History*) to see the text you copied recently. **Enter** pastes it into the app you were using; **Ctrl + K** copies, pins or deletes it. Pinned items stay until you remove them. Settings choose how many items to keep (up to 200), when to forget them, which apps to ignore, the shortcut, and clear the history. Copies that password managers mark as secret, including Lumen's own Password Generator, are never kept. Images and files are not recorded.
+  - **Emoji:** search emoji by name, keyword, `:shortcode:` or emoticon in an 8-column grid, in English or Persian (`heart`, `قلب`, `:fire:` or `<3`). **Enter** pastes the emoji into the app you were using; **Ctrl + K** copies it. While it is on, typing `:fire`, `:)` or `<3` in Lumen's main search lists matching emoji at the top, so you don't need to open the picker. Your recently used emoji come first, and a setting picks the skin tone.
   - **Password Generator:** random passwords of 5–64 characters, or memorable ones such as `{word:capitalize}-{number:4}{symbol}`. *Copy Random Password* puts one on the clipboard without opening anything.
 - **Extensions.** Add your own commands, written in JavaScript or TypeScript.
 - **Private.** Your searches are never saved or sent anywhere. No account, no telemetry.
@@ -109,6 +110,8 @@ To write your own, see the [extension guide](sdk/README.md) and the examples in 
 ## Privacy
 
 Your searches are not saved or sent anywhere. Lumen keeps only a count of which results you open, so it can rank them higher. That count stays in `~/.local/share/gnome-launcher/`, and **Settings** can clear it. Extensions are separate programs and may use the network themselves.
+
+Emoji keeps the emoji you picked recently in `~/.local/share/gnome-launcher/extension-storage/lumen.emoji.json`.
 
 Clipboard History records nothing until you turn it on. Then it keeps the text you copy in `~/.local/share/gnome-launcher/clipboard-history.json`, readable only by you and never sent anywhere.
 
